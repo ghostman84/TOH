@@ -14,7 +14,7 @@ pipeline {
                     node -v
                     npm config set registry https://nexushdq.aa.com/repository/registry.npmjs-proxy/
                     npm install 
-                    sh 'env'
+                    printenv
                     '''
                 }
                 post {
