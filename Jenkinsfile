@@ -1,5 +1,8 @@
 pipeline {
     agent any
+    environment {
+    // No environment variables specified
+    }    
     stages {
         stage('Build') {
             steps {
@@ -19,8 +22,3 @@ pipeline {
         }
     }
 }
-
-// docker exec -it -u 0 jenkins /bin/bash
-// docker run -u 0 -it jenkins bash
-
-
