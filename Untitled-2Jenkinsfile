@@ -1,0 +1,201 @@
+!groovy
+import groovy.transform.Field
+
+@Field bluemixMode = "public"      // switch for public and dedicated bluemix. holds public for dev and QA, dedicated for staging and PROD
+
+node('Builder') {
+
+    withEnv([
+        'cfRootAppName=aa-cim-forms-service',
+        'slackChannel=#ct-com-msg-uploads',
+        'slackHook=https://americanairlines.slack.com/services/hooks/jenkins-ci/',
+        'cfApiUrl=https://api.ng.bluemix.net',
+        'cfOrg=AA-CustTech-Uploads',
+        'cfAppDomain=mybluemix.net',
+        'httpProxy=http://nonprod.inetgw.aa.com:9093',
+        "BLUEMIX_HOME=${env.WORKSPACE}",
+        "CF_HOME=${env.WORKSPACE}"
+        ]) {
+
+        withCredentials([
+            string(credentialsId: 'SLACK_UPLOADS_TOKEN', variable: 'SLACK_TOKEN')]) {
+
+            currentBuild.result = "SUCCESS"
+
+            try {
+                  stage('Checkout') {
+                    deleteDir()
+                    checkout scm
+                    sh 'git clean -f && git reset'
+                  } 
+
+                version = ''
+                cfAppName = cfRootAppName
+
+                stage('Build') {
+
+                    slackSend channel: "${slackChannel}", message: "Build Started: ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)", color: '#FFFF00', token: "${SLACK_TOKEN}", baseUrl: "${slackHook}"
+
+                    // TODO: support Gradle
+
+                    // read metadata from pom
+                    def pomXml = readFile('aa-cim-forms-service/pom.xml')
+                    def pomVersion = getVersion(pomXml)
+
+                    if (!pomVersion) {
+                        throw new Exception("Failed reading POM <version>")
+                    }
+
+                    // use the build number in the versioning
+                    version = pomVersion.replace('-SNAPSHOT', ".${currentBuild.number}")
+
+                    echo "Building ${cfAppName} version ${version}"
+
+                    // make maven release script executable
+                    sh 'chmod u+x ./devops/maven/release.sh'
+
+                    // NOTE: mvn release requires no pending changes in source control
+                    sh 'git add -A && git commit -m "mvn clean and make mvn-release.sh executable"'
+
+                    // get Nexus API credentials from Jenkins "Credentials" store
+                    withCredentials([
+                        string(credentialsId: 'NEXUS_USERNAME', variable: 'NEXUS_USERNAME'),
+                        string(credentialsId: 'NEXUS_PASSWORD', variable: 'NEXUS_PASSWORD')]) {
+
+                        // build, test, and release the build artifacts to Nexus
+                        sh "./devops/maven/release.sh \"${version}\" \"${pomVersion}\" \"${NEXUS_USERNAME}\" \"${NEXUS_PASSWORD}\""
+                    }
+                }
+                
+                stage('Report') {
+                	echo "Checkstyle Report"
+                	sh 'mvn checkstyle:check'
+                }
+
+                stage('Deploy: Prep') {
+                    // output Cloud Foundry CLI version for logging history
+                    sh 'cf -v'
+
+                    // make CF deploy script executable
+                    sh 'chmod u+x ./devops/bluemix/deploy.sh'
+                }
+
+                stage('Deploy: Dev') {
+
+                    withEnv([
+                        'cfSpace=dev',
+                        'manifestPath=./devops/bluemix/manifest-dev.yml',
+                        'cfKeepRollback=0'
+                        ]) {
+
+                        echo "Deploying version ${version} to Dev environment"
+
+                        // deploy arguments
+                        jarPath = "./target/checkout/${cfAppName}/target/${cfAppName}-${version}.jar"
+                        cfAppName = "${cfAppName}-${cfSpace}"
+
+                        sh "rm -rf ./target/sonar/* "
+                        sonarScan()
+            			echo "after coverage build status = "  + currentBuild.result
+
+                        // get Bluemix API credentials from Jenkins "Credentials" store
+                        withCredentials([
+                            string(credentialsId: 'BLUEMIX_UPLOADS_API_KEY', variable: 'CF_API_KEY'),
+                            string(credentialsId: 'CASS_SPLUNK_TOKEN_DEV', variable: 'splunkTokenDev'),
+                            string(credentialsId: 'NON_PROD_NEW_RELIC_LICENSE_KEY', variable: 'NEW_RELIC_LICENSE_KEY')]) {
+							sh "./devops/bluemix/deploy.sh \"${cfApiUrl}\" \"${CF_API_KEY}\" \"${cfOrg}\" \"${cfSpace}\" \"${cfAppDomain}\" \"${cfAppName}\" \"${jarPath}\" \"${manifestPath}\" \"${NEW_RELIC_LICENSE_KEY}\" \"${cfKeepRollback}\" \"${httpProxy}\" \"${bluemixMode}\" a b c \"${splunkTokenDev}\" d"
+                        }
+
+                        def subject = "${currentBuild.result}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+                        def summary = "${subject} (<${env.BUILD_URL}|Open>)\n\n(<https://${cfAppName}.${cfAppDomain}/health|Health Check>)"
+                        slackSend channel: "${slackChannel}", message: summary, color: '#00FF00', token: "${SLACK_TOKEN}", baseUrl: "${slackHook}"
+                        
+                        triggerRemoteJob parameterFactories: [[$class: 'SimpleString', name: 'environmentParam', value: 'dev'], [$class: 'SimpleString', name: 'formServiceBuildNumberParam', value: "Service name: ${cfAppName} Build number: ${env.BUILD_NUMBER}"]], remotePathMissing: [$class: 'ContinueAsIs'], remotePathUrl: 'jenkins://fc77c055e40afd4043cf1b0f5fd31071/AA-DevOps/AA-CustTech-aacom/aa-cim-forms-service-fitnesse'                      
+                    }
+                }
+                
+                cfAppName = cfRootAppName
+                def userInput
+                stage('Deploy: Qa') {
+                  try {
+	                timeout(time: 1, unit: 'MINUTES') {
+		                userInput = input(
+							 id: 'userInput', message: 'Promote to qa?', parameters: [
+							 [$class: 'TextParameterDefinition', defaultValue: 'Yes', description: 'Promote to qa', name: 'promote']
+						])
+					}	
+				  } catch(err) { //input No
+    				userInput = 'No'
+    				echo "Deployment to QA environment not approved."
+				  }
+			      echo ("User Input: "+userInput)
+				  if(userInput == 'Yes') {
+					echo "Deploying to QA environment..."
+                    withEnv([
+                        'cfSpace=qa',
+                        'manifestPath=./devops/bluemix/manifest-qa.yml',
+                        'cfKeepRollback=0'
+                        ]) {
+
+                        echo "Deploying version ${version} to QA environment"
+
+                        // deploy arguments
+                        jarPath = "./target/checkout/${cfAppName}/target/${cfAppName}-${version}.jar"
+                        cfAppName = "${cfAppName}-${cfSpace}"
+
+                        // get Bluemix API credentials from Jenkins "Credentials" store
+                        withCredentials([
+                            string(credentialsId: 'BLUEMIX_UPLOADS_API_KEY', variable: 'CF_API_KEY'),
+                            string(credentialsId: 'NON_PROD_NEW_RELIC_LICENSE_KEY', variable: 'NEW_RELIC_LICENSE_KEY')]) {
+
+                            sh "./devops/bluemix/deploy.sh \"${cfApiUrl}\" \"${CF_API_KEY}\" \"${cfOrg}\" \"${cfSpace}\" \"${cfAppDomain}\" \"${cfAppName}\" \"${jarPath}\" \"${manifestPath}\" \"${NEW_RELIC_LICENSE_KEY}\" \"${cfKeepRollback}\" \"${httpProxy}\" \"${bluemixMode}\""
+                        }
+
+                        def subject = "${currentBuild.result}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+                        def summary = "${subject} (<${env.BUILD_URL}|Open>)\n\n(<https://${cfAppName}.${cfAppDomain}/health|Health Check>)"
+                        slackSend channel: "${slackChannel}", message: summary, color: '#00FF00', token: "${SLACK_TOKEN}", baseUrl: "${slackHook}"
+                        
+                        triggerRemoteJob parameterFactories: [[$class: 'SimpleString', name: 'environmentParam', value: 'dev'], [$class: 'SimpleString', name: 'formServiceBuildNumberParam', value: "Service name: ${cfAppName} Build number: ${env.BUILD_NUMBER}"]], remotePathMissing: [$class: 'ContinueAsIs'], remotePathUrl: 'jenkins://fc77c055e40afd4043cf1b0f5fd31071/AA-DevOps/AA-CustTech-aacom/aa-cim-forms-service-fitnesse'                      
+                    }
+                  }
+                }
+
+            } catch(err) {
+                currentBuild.result = "FAILURE"
+
+                def errorMessage = err.getMessage()
+                def subject = "${currentBuild.result}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+                def summary = "${subject} (<${env.BUILD_URL}|Open>)"
+
+                slackSend channel: "${slackChannel}", message: summary, color: '#FF0000', token: "${SLACK_TOKEN}", baseUrl: "${slackHook}"
+
+                throw err
+
+            } finally {
+
+                deleteDir()
+            }
+        }
+    }
+}
+
+
+                 
+@NonCPS
+def getVersion(text) {
+  def matcher = text =~ '<version>(.+)</version>'
+  matcher ? matcher[0][1] : null
+}
+
+def sonarScan(){
+    sh " mvn package sonar:sonar -Pcoverage"
+
+    publishHTML (target: [
+        allowMissing: false,
+        alwaysLinkToLastBuild: false,
+        keepAll: true,
+        reportDir: 'target',
+        reportFiles: 'index.html',
+        reportName: "Code Coverage Report"
+    ])
+}

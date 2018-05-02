@@ -1,0 +1,43 @@
+node {
+  git url: 'https://github.com/mm54760/TOH.git'
+  env.NODEJS_HOME = "${tool 'node891'}"
+  env.PATH="${env.NODEJS_HOME}/bin:${env.PATH}"
+  sh 'ls -l /var/jenkins_home/tools/jenkins.plugins.nodejs.tools.NodeJSInstallation/node891/bin'
+  sh 'npm install'
+  sh 'ng -v'
+}
+
+
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                git url: 'https://github.com/mm54760/TOH.git'
+                sh '''
+                npm config ls
+                node -v
+                npm config set registry https://nexushdq.aa.com/repository/registry.npmjs-proxy/
+                npm install 
+                '''
+            }
+        }
+        post {
+            success {
+                slackSend channel: "#general", message: summary, color: '#00FF00', token: "5lyVojwh3kSmvacBPNFz6wl2", baseUrl: "https://testingjenkinsgroup.slack.com/services/hooks/jenkins-ci/"
+                // slackSend channel: '#ops-room',
+                //         color: 'good',
+                //         message: "The pipeline ${currentBuild.fullDisplayName} completed successfully."
+            }
+        }        
+        
+    }
+}
+
+// docker exec -it -u 0 jenkins /bin/bash
+// docker run -u 0 -it jenkins bash
+
+
+https://testingjenkinsgroup.slack.com/messages/CAH25QZD4/
+
+d1ee812d8be532d09887488d0ee8d4073f7c953b
