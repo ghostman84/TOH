@@ -21,16 +21,15 @@ pipeline {
                 npm install 
                 '''
             }
+            post {
+                success {
+                    slackSend channel: "#general", message: "The pipeline ${currentBuild.fullDisplayName} completed successfully.", color: '#00FF00', token: "5lyVojwh3kSmvacBPNFz6wl2", baseUrl: "https://testingjenkinsgroup.slack.com/services/hooks/jenkins-ci/"
+                    // slackSend channel: '#ops-room',
+                    //         color: 'good',
+                    //         message: "The pipeline ${currentBuild.fullDisplayName} completed successfully."
+                }
+            }                
         }
-        post {
-            success {
-                slackSend channel: "#general", message: summary, color: '#00FF00', token: "5lyVojwh3kSmvacBPNFz6wl2", baseUrl: "https://testingjenkinsgroup.slack.com/services/hooks/jenkins-ci/"
-                // slackSend channel: '#ops-room',
-                //         color: 'good',
-                //         message: "The pipeline ${currentBuild.fullDisplayName} completed successfully."
-            }
-        }        
-        
     }
 }
 
@@ -40,4 +39,3 @@ pipeline {
 
 https://testingjenkinsgroup.slack.com/messages/CAH25QZD4/
 
-d1ee812d8be532d09887488d0ee8d4073f7c953b
