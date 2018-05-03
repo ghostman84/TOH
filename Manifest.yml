@@ -1,0 +1,9 @@
+---
+applications:
+- instances: 1
+  timeout: 180
+  name: jjw-staticweb-2
+  domain: mybluemix.net
+  host: jjw-staticweb-2
+  path: ./dist/
+  buildpack: staticfile_buildpack

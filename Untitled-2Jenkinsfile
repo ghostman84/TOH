@@ -34,7 +34,11 @@ node('Builder') {
 
                 stage('Build') {
 
-                    slackSend channel: "${slackChannel}", message: "Build Started: ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)", color: '#FFFF00', token: "${SLACK_TOKEN}", baseUrl: "${slackHook}"
+                    slackSend channel: "${slackChannel}", 
+                              message: "Build Started: ${env.JOB_NAME} ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)", 
+                              color: '#FFFF00', 
+                              token: "${SLACK_TOKEN}", 
+                              baseUrl: "${slackHook}"
 
                     // TODO: support Gradle
 
@@ -199,3 +203,4 @@ def sonarScan(){
         reportName: "Code Coverage Report"
     ])
 }
+

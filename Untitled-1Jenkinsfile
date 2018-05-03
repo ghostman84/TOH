@@ -1,23 +1,138 @@
-pipeline {
-    agent any
-    stages {
-        stage('Build') {
-            steps {
-                git url: 'https://github.com/mm54760/TOH.git'
-                sh '''
-                npm config ls
-                node -v
-                npm config set registry https://nexushdq.aa.com/repository/registry.npmjs-proxy/
-                npm install 
-                '''
-            }
-            post {
-                success {
-                    slackSend channel: "#general", message: "The pipeline ${currentBuild.fullDisplayName} completed successfully.", color: '#00FF00', token: "5lyVojwh3kSmvacBPNFz6wl2", baseUrl: "https://testingjenkinsgroup.slack.com/services/hooks/jenkins-ci/"
-                }
-            }                
-        }
-    }
+@Library('SharedLibrary') _
+
+//Cause all properties of job to be deleted
+//properties([buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '1')), [$class: 'ScannerJobProperty', doNotScan: false], gitLabConnection(''), [$class: 'ThrottleJobProperty', categories: [], limitOneJobWithMatchingParams: false, maxConcurrentPerNode: 0, maxConcurrentTotal: 0, paramsToUseForLimit: '', throttleEnabled: false, throttleOption: 'project'], pipelineTriggers([])])
+
+timestamps() {
+  // Execute this pipeline on any nodes available that is labelled "Builder". Jenkins will automatically take care of assigning agents to every build
+  node('Builder') {
+  	def notifyUsers ='simon.ting@aa.com, simonting88@gmail.com'
+
+  	try {
+			def userName = edtUtil.getCauses()
+			echo "name=${userName}"
+			def mvnHome = tool 'Maven339'
+			def orgName="EIS"
+			def appName = "ut-example"
+			
+			echo "Testing Logging - Organization=${orgName}"
+	  
+			//GitHub token repo and branch
+			def credID = '407ad40a-dfa6-442a-b50f-cac690049da7'
+			def gitURL = 'https://ghe.aa.com/EIS-DevOps/ut-example.git'
+			def branch = 'development'
+			
+			//Sonar Login token
+		    def SONAR_AUTH_TOKEN = '72585020005975ee62beacc0dcbb68ac4aac7d17'
+			
+			//Nexus IQ stage
+			def nexusIQStage = 'build'
+			
+			//Slack message send to https://americanairlines.slack.com/messages/C768XD3DH/team/U6EPPBWHF/
+			def slackDomain = "AmericanAirlines"
+			def slackChannel = "misc-eis-devops"
+			def slackToken = 'NzmRWAaYSBxjPX588tiEAV3K'
+			//Example on how to send slack message
+			slackSend channel: "${slackChannel}", message:"Started ${env.JOB_NAME} ${env.BUILD_NUMBER} ${userName} (<${env.BUILD_URL}|Open>)",  teamDomain: "${slackDomain}", token: "${slackToken}"
+
+			stage('Checkout') {
+				echo "*****Checkout code*****"	
+				//Delete everything in workspace to start fresh
+				deleteDir()
+				//Checkout the code
+				git branch: "${branch}", credentialsId: "${credID}", url: "${gitURL}"
+		        slackSend channel: "${slackChannel}", attachments: "README.txt", message:"Started ${env.JOB_NAME} ${env.BUILD_NUMBER} ${userName} (<${env.BUILD_URL}|Open>)",  teamDomain: "${slackDomain}", token: "${slackToken}"
+
+			}
+
+			stage('Sonar Analysis') {
+				echo "*****Sonar Analysis*****"	
+				//Perform Sonar Analysis in publish/default mode to update sonar database.  This command is all it takes to run sonar analysis and upload it to SonarQube server.
+				sh "sonar-scanner -Dsonar.host.url=${env.SonarQubeServer} -Dsonar.login=${SONAR_AUTH_TOKEN} -Dsonar.projectName=${appName} -Dsonar.sources=src/main -Dsonar.scm.disabled=True -Dsonar.projectBaseDir=. -Dsonar.projectVersion=1.0 -Dsonar.sourceEncoding=UTF-8 -Dsonar.tests=src/test -Dsonar.junit.reportsPath=target/surefire-reports -Dsonar.cobertura.reportPath=target/site/cobertura/coverage.xml -Dsonar.java.coveragePlugin=cobertura -Dsonar.projectVersion=1.0 -Dsonar.sourceEncoding=UTF-8 -Dsonar.projectKey=${appName}"   
+
+				//Perform Sonar Analysis in preview mode to generate report to be used on Jenkins Job page sidebar.  Note that this is only needed for generating report for Jenkins and does not upload report to SonarQube Server.
+				sh "sonar-scanner -Dsonar.host.url=${env.SonarQubeServer} -Dsonar.login=${SONAR_AUTH_TOKEN} -Dsonar.projectName=${appName} -Dsonar.sources=src/main -Dsonar.scm.disabled=True -Dsonar.projectBaseDir=. -Dsonar.projectVersion=1.0 -Dsonar.sourceEncoding=UTF-8 -Dsonar.tests=src/test -Dsonar.junit.reportsPath=target/surefire-reports -Dsonar.cobertura.reportPath=target/site/cobertura/coverage.xml -Dsonar.java.coveragePlugin=cobertura -Dsonar.projectVersion=1.0 -Dsonar.sourceEncoding=UTF-8 -Dsonar.projectKey=${appName} -Dsonar.analysis.mode=preview -Dsonar.issuesReport.html.enable=true"   
+
+				//These commands takes the html reports generated above and publish to Jenkins master and create links in job home page on the left side-bar
+				publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '.sonar/issues-report/', reportFiles: 'issues-report.html', reportName: 'Sonar Issues All'])
+				publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '.sonar/issues-report/', reportFiles: 'issues-report-light.html', reportName: 'Sonar Issues New'])
+			}
+
+			stage('Fortify Scan') {
+				echo "*****Fortify Scan*****"	
+              //fortifyScan {
+        			//appName="ut-example"
+        			//appVersion="1.0.0"
+        			//sourcePattern="**/*.java"
+        			//emailSuccess="simon.ting@aa.com"
+        			//emailFailure="simon.ting@aa.com"
+        		//}
+			}
+
+			stage('build') {		
+				echo "*****Build*****"			
+				//Do the build only and skip test to it's own stage.
+				//-B to suppress download progress
+				//-q to suppress all non-error messages
+				sh "${mvnHome}bin/mvn clean install -U -B --settings settings.xml -DskipTests=true"
+				archiveArtifacts artifacts: '**/target/*.jar', excludes: null
+			}
+
+			stage('Unit Test') {
+				echo "*****Unit Test*****"
+				//Run unit test create surefire-report (test report )only
+				sh "${mvnHome}/bin/mvn validate test surefire-report:report-only cobertura:cobertura -Dmaven.cobertura.datafile=target/cobertura/cobertura.ser"
+				
+				echo "*****Generate Coverage report*****"
+				//Run cobertura goal in maven to generate code coverage report in xml format locally to be published to Jenkins Master
+				sh "${mvnHome}/bin/mvn cobertura:cobertura -Dcobertura.report.format=xml -Dmaven.cobertura.datafile=target/cobertura/cobertura.ser"
+				echo "*****Publish JUnit Report*****"
+				step([$class: 'JUnitResultArchiver', testResults: 'target/surefire-reports/*.xml'])
+
+				//These commands takes the xml reports generated by the 'mvn cobertura..." command and publish to Jenkins master and create links in job home page on the left side-bar
+				publishHTML(target: [allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'target/site/cobertura/', reportFiles: 'index.html', reportName: "${appName} Cobertura Report"])
+				publishHTML(target: [allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'target/site/', reportFiles: 'surefire-report.html', reportName: "${appName} Test Report"])
+			}			
+
+			stage('Nexus IQ Component Scan') {
+				echo "*****Nexus IQ server component Scan*****"
+				//sh "java -Djava.net.useSystemProxies=false -jar /opt/apps/clm/scanner/nexus-iq-cli-1.19.0.jar -i ${appName} -s ${env.NexusIQServer} -r ${appName}.json **/"
+				//nexusPolicyEvaluation failBuildOnNetworkError: false, iqApplication: "${appName}", iqStage: "${nexusIQStage}", jobCredentialsId: ''
+                sh "${mvnHome}/bin/mvn com.sonatype.clm:clm-maven-plugin:2.8.0-01:evaluate " +
+                "-Dclm.applicationId=${appName} " +
+                "-Dclm.resultFile=${appName}-clm-eval.json " +
+                "-Dclm.serverUrl=${env.NexusIQServer}"
+			}
+
+			stage('Nexus Upload') {
+				sh "${mvnHome}/bin/mvn deploy -DaltDeploymentRepository=nexus-snapshots::default::${env.NexusServer}/nexus/content/repositories/${appName}-snapshot-local -DskipTests=true"
+			}
+
+			stage('Deployment') {
+			  //No code
+			  echo "Deployed to Production"
+			}
+	
+			stage('Notifier') {
+				echo "*****Notify*****"	 
+				currentBuild.result = "Success"
+				emailext attachLog: false, body: "${userName}<br></br>Check CloudBees Jenkins console output at ${env.BUILD_URL} to view the results.<br></br> ", mimeType: 'text/html', subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${currentBuild.result}", to: "${notifyUsers}"
+				
+				//attach pdf files in workspace directory
+				//emailext attachLog: true, attachmentsPattern: '**/*.pdf',body: "${userName}<br></br>Check CloudBees Jenkins console output at ${env.BUILD_URL} to view the results.<br></br> ", mimeType: 'text/html', subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${currentBuild.result}", to: "${notifyUsers}"
+
+				echo "Status mail: ${currentBuild.result}"
+			}
+		} catch (err) {
+  		echo "Failed: ${err}"
+  		currentBuild.result = "Failure"
+  		echo "Status in catch: ${currentBuild.result}"
+  		
+  		emailext attachLog: false, body: "Check console output at ${env.BUILD_URL} to view the results.<br></br> ", mimeType: 'text/html', subject: "${env.JOB_NAME} - Build # ${env.BUILD_NUMBER} - ${currentBuild.result}", to: "${notifyUsers}"
+
+  		throw err
+  	}
+  }
 }
 
 // docker exec -it -u 0 jenkins /bin/bash
