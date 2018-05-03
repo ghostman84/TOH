@@ -8,7 +8,7 @@ pipeline {
         SLACK_TOKEN = "5lyVojwh3kSmvacBPNFz6wl2"
 
         //GitHub 
-        GIT_URL = "'https://github.com/mm54760/TOH.git'"
+        GIT_URL = "https://github.com/mm54760/TOH.git"
     }    
     stages {
         stage('Checkout') {
