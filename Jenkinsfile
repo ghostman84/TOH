@@ -14,7 +14,7 @@ pipeline {
         stage('Checkout') {
             steps {
                  deleteDir()
-                 git url: ${env.GIT_URL}
+                 git url: "${env.GIT_URL}"
             }            
             post {
                 success {
