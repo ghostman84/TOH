@@ -1,15 +1,1 @@
-node('Builder')
-{ 
-deleteDir() // Added by automation as part of workspace cleanup.
-    
 
-stage('NPM'){
-        //set npm to use nexus proxy to reach npmjs.org
-        sh '''
-          npm config ls
-          node -v
-          npm config set registry https://nexushdq.aa.com/repository/registry.npmjs-proxy/
-          npm install angular
-        '''
-}
-}
